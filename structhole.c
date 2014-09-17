@@ -224,7 +224,7 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 	    nholes, holesz);
 	printf("\t/* last cacheline: %lu bytes */\n", lastoff % cachelinesize);
 
-	printf("}\n");
+	printf("};\n");
 }
 
 int
