@@ -52,8 +52,6 @@
 #include <elfutils/libdwfl.h>
 #include <libelf.h>
 
-#define VERBOSE 1
-
 static const char *argv0, *structname, *binary;
 static size_t cachelinesize = 64;
 
@@ -148,12 +146,10 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 			continue;
 
 		members++;
-
-
-#if 0
-numeric: DW_AT_bit_offset, DW_AT_bit_size;
-#endif
-
+		/*
+		 * TODO: Handle bitfield members. DW_AT_bit_offset,
+		 * DW_AT_bit_size;
+		 */
 
 	 	/* Chase down the type die of this member */
 		if (dwarf_attr_integrate(&memdie, DW_AT_type, &type_attr) == NULL)
