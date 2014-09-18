@@ -209,10 +209,17 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 
 		lastoff = off + msize;
 		if (lastoff / cachelinesize > cline) {
+			int ago = lastoff % cachelinesize;
 			cline = lastoff / cachelinesize;
-			printf("\t/* --- cacheline %u boundary (%ld bytes) was"
-			    " %d bytes ago --- */\n", cline, (long)cline *
-			    cachelinesize, (int)(lastoff % cachelinesize));
+
+			if (ago)
+				printf("\t/* --- cacheline %u boundary (%ld "
+				    "bytes) was %d bytes ago --- */\n", cline,
+				    (long)cline * cachelinesize, ago);
+			else
+				printf("\t/* --- cacheline %u boundary (%ld "
+				    "bytes) --- */\n", cline, (long)cline *
+				    cachelinesize);
 		}
 	} while ((x = dwarf_siblingof(&memdie, &memdie)) == 0);
 	if (x == -1)
