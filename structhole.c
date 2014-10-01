@@ -48,6 +48,7 @@
 #include <bsd/sys/cdefs.h>
 
 #include <dwarf.h>
+#include <elf.h>
 #include <elfutils/libdw.h>
 #include <elfutils/libdwfl.h>
 #include <libelf.h>
@@ -59,6 +60,7 @@ enum {
 
 static const char *argv0, *structname, *binary;
 static size_t cachelinesize = 64;
+static size_t pointer_size = sizeof(void *);
 
 static void
 usage(void)
@@ -157,6 +159,9 @@ get_member_size(Dwarf_Die *type_die, Dwarf_Word *msize_out)
 {
 	if (dwarf_aggregate_size(type_die, msize_out) != -1)
 		return (0);
+
+	if (dwarf_tag(type_die) == DW_TAG_pointer_type)
+		return (pointer_size);
 
 	dwarf_err(EX_DATAERR, "dwarf_aggregate_size");
 	return (-1);
@@ -266,6 +271,32 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 	printf("};\n");
 }
 
+static void
+get_elf_pointer_size(Dwarf *dw)
+{
+	Elf *elf;
+	char *elf_ident;
+	size_t elf_nident;
+
+	elf = dwarf_getelf(dw);
+
+	elf_ident = elf_getident(elf, &elf_nident);
+	assert(elf_ident != NULL && elf_nident > EI_CLASS);
+
+	switch ((uint8_t)elf_ident[EI_CLASS]) {
+	case ELFCLASS32:
+		pointer_size = 4;
+		break;
+	case ELFCLASS64:
+		pointer_size = 8;
+		break;
+	case ELFCLASSNONE:
+	default:
+		errx(EX_DATAERR, "Bogus ELF ident header, machine class=%u.\n",
+		    (unsigned)elf_ident[EI_CLASS]);
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -295,6 +326,8 @@ main(int argc, char **argv)
 			errx(EX_USAGE, "%s: Not a regular file", binary);
 		dwarf_err_errno(EX_DATAERR, error, "dwarf_begin");
 	}
+
+	get_elf_pointer_size(dw);
 
 	/* XXX worry about .debug_types sections later. */
 
