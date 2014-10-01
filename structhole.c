@@ -52,6 +52,11 @@
 #include <elfutils/libdwfl.h>
 #include <libelf.h>
 
+/* Bizarrely, elfutils doesn't make error values publically visible. */
+enum {
+	DWARF_E_NO_REGFILE = 3,
+};
+
 static const char *argv0, *structname, *binary;
 static size_t cachelinesize = 64;
 
@@ -64,7 +69,7 @@ usage(void)
 }
 
 static void __dead2
-_dwarf_err(const char *fn, unsigned ln, const char *func, int ex,
+_dwarf_err(const char *fn, unsigned ln, const char *func, int ex, int error,
     const char *fmt, ...)
 {
 	va_list ap;
@@ -75,11 +80,19 @@ _dwarf_err(const char *fn, unsigned ln, const char *func, int ex,
 	vprintf(fmt, ap);
 	va_end(ap);
 
-	printf(": %s(%d)\n", dwarf_errmsg(-1), dwarf_errno());
+	/*
+	 * Bizarrely, this clears the global DWARF error, breaking
+	 * dwarf_errmsg(-1):
+	 */
+	if (error == -1)
+		error = dwarf_errno();
+	printf(": %s(%d)\n", dwarf_errmsg(error), error);
 	exit(ex);
 }
 #define dwarf_err(ex, fmt, ...) \
-    _dwarf_err(__FILE__, __LINE__, __func__, (ex), (fmt), ##__VA_ARGS__)
+    _dwarf_err(__FILE__, __LINE__, __func__, (ex), (-1), (fmt), ##__VA_ARGS__)
+#define dwarf_err_errno(ex, no, fmt, ...) \
+    _dwarf_err(__FILE__, __LINE__, __func__, (ex), (no), (fmt), ##__VA_ARGS__)
 
 static inline bool
 isstruct(int dwtag)
@@ -110,6 +123,45 @@ get_uleb128(Dwarf_Word *out, unsigned char *dat)
 	}
 }
 
+static int
+get_member_offset(Dwarf_Die *memdie, Dwarf_Word *off_out)
+{
+	Dwarf_Attribute loc_attr;
+	Dwarf_Block block;
+
+	if (dwarf_attr_integrate(memdie, DW_AT_data_member_location, &loc_attr)
+	    == NULL)
+		dwarf_err(EX_DATAERR, "dwarf_attr_integrate(%s/loc)",
+		    dwarf_diename(memdie));
+
+	switch (dwarf_whatform(&loc_attr)) {
+	case DW_FORM_block:
+	case DW_FORM_block1:
+	case DW_FORM_block2:
+	case DW_FORM_block4:
+		if (dwarf_formblock(&loc_attr, &block))
+		    dwarf_err(EX_DATAERR, "dwarf_formblock(%s)",
+			dwarf_diename(memdie));
+		assert(block.data[0] == DW_OP_plus_uconst ||
+		    block.data[0] == DW_OP_constu);
+		get_uleb128(off_out, &block.data[1]);
+		return (0);
+	default:
+		printf("ZZZ!\n");
+		return (-1);
+	}
+}
+
+static int
+get_member_size(Dwarf_Die *type_die, Dwarf_Word *msize_out)
+{
+	if (dwarf_aggregate_size(type_die, msize_out) != -1)
+		return (0);
+
+	dwarf_err(EX_DATAERR, "dwarf_aggregate_size");
+	return (-1);
+}
+
 static void
 structprobe(Dwarf *dw, Dwarf_Die *structdie)
 {
@@ -135,12 +187,11 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 	}
 
 	do {
-		Dwarf_Attribute type_attr, loc_attr;
+		Dwarf_Attribute type_attr;
 		Dwarf_Die type_die;
 		char type_name[128], mem_name[128];
 
 		Dwarf_Word msize, off;
-		Dwarf_Block block;
 
 		if (dwarf_tag(&memdie) != DW_TAG_member)
 			continue;
@@ -161,31 +212,12 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 			    dwarf_diename(&memdie));
 
 		/* Member offset ... */
-		if (dwarf_attr_integrate(&memdie, DW_AT_data_member_location,
-		    &loc_attr) == NULL)
-			dwarf_err(EX_DATAERR, "dwarf_attr_integrate(%s/loc)",
-			    dwarf_diename(&memdie));
-
-		switch (dwarf_whatform(&loc_attr)) {
-		case DW_FORM_block:
-		case DW_FORM_block1:
-		case DW_FORM_block2:
-		case DW_FORM_block4:
-			if (dwarf_formblock(&loc_attr, &block))
-			    dwarf_err(EX_DATAERR, "dwarf_formblock(%s)",
-				dwarf_diename(&memdie));
-			assert(block.data[0] == DW_OP_plus_uconst ||
-			    block.data[0] == DW_OP_constu);
-			get_uleb128(&off, &block.data[1]);
-			break;
-		default:
-			printf("ZZZ!\n");
-			exit(EX_SOFTWARE);
-		}
+		if (get_member_offset(&memdie, &off) == -1)
+			dwarf_err(EX_DATAERR, "%s", dwarf_diename(&memdie));
 
 		/* Member size. */
-		if (dwarf_aggregate_size(&type_die, &msize) == -1)
-			dwarf_err(EX_DATAERR, "dwarf_aggregate_size");
+		if (get_member_size(&type_die, &msize) == -1)
+			dwarf_err(EX_DATAERR, "get_member_size");
 
 		if (isstruct(dwarf_tag(&type_die)))
 			snprintf(type_name, sizeof(type_name), "struct %s",
@@ -241,7 +273,7 @@ main(int argc, char **argv)
 	Dwarf *dw;
 
 	size_t hdr_size;
-	int cufd;
+	int cufd, error;
 
 	argv0 = argv[0];
 	if (argc < 3)
@@ -257,8 +289,12 @@ main(int argc, char **argv)
 		err(EX_USAGE, "open");
 
 	dw = dwarf_begin(cufd, DWARF_C_READ);
-	if (dw == NULL)
-		dwarf_err(EX_DATAERR, "dwarf_begin");
+	if (dw == NULL) {
+		error = dwarf_errno();
+		if (error == DWARF_E_NO_REGFILE)
+			errx(EX_USAGE, "%s: Not a regular file", binary);
+		dwarf_err_errno(EX_DATAERR, error, "dwarf_begin");
+	}
 
 	/* XXX worry about .debug_types sections later. */
 
