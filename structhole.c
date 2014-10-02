@@ -224,10 +224,14 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 		if (get_member_size(&type_die, &msize) == -1)
 			dwarf_err(EX_DATAERR, "get_member_size");
 
-		if (isstruct(dwarf_tag(&type_die)))
-			snprintf(type_name, sizeof(type_name), "struct %s",
-			    dwarf_diename(&type_die));
-		else
+		if (isstruct(dwarf_tag(&type_die))) {
+			if (dwarf_diename(&type_die) != NULL)
+				snprintf(type_name, sizeof(type_name),
+				    "struct %s", dwarf_diename(&type_die));
+			else
+				snprintf(type_name, sizeof(type_name),
+				    "struct <anonymous>");
+		} else
 			snprintf(type_name, sizeof(type_name), "%s",
 			    dwarf_diename(&type_die));
 
