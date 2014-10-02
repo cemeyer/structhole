@@ -168,6 +168,20 @@ get_member_size(Dwarf_Die *type_die, Dwarf_Word *msize_out)
 }
 
 static void
+get_dwarf_attr(Dwarf_Die *parent, int attr, Dwarf_Attribute *attr_out,
+    Dwarf_Die *die_out)
+{
+
+	if (dwarf_attr_integrate(parent, attr, attr_out) == NULL)
+		dwarf_err(EX_DATAERR, "dwarf_attr_integrate(%s/%d)",
+		    dwarf_diename(parent), attr);
+
+	if (dwarf_formref_die(attr_out, die_out) == NULL)
+		dwarf_err(EX_DATAERR, "dwarf_formref_die(%s)",
+		    dwarf_diename(parent));
+}
+
+static void
 structprobe(Dwarf *dw, Dwarf_Die *structdie)
 {
 	Dwarf_Die memdie;
@@ -192,9 +206,12 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 	}
 
 	do {
-		Dwarf_Attribute type_attr;
-		Dwarf_Die type_die;
-		char type_name[128], mem_name[128];
+		Dwarf_Attribute type_attr, base_type_attr;
+		Dwarf_Die type_die, base_type_die;
+		char type_name[128], mem_name[128], ptr_suffix[32] = { '\0' };
+		const char *type_tag = "";
+		const char *type = NULL;
+		unsigned type_ptrlevel = 0;
 
 		Dwarf_Word msize, off;
 
@@ -208,13 +225,7 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 		 */
 
 	 	/* Chase down the type die of this member */
-		if (dwarf_attr_integrate(&memdie, DW_AT_type, &type_attr) == NULL)
-			dwarf_err(EX_DATAERR, "dwarf_attr_integrate(%s/type)",
-			    dwarf_diename(&memdie));
-
-		if (dwarf_formref_die(&type_attr, &type_die) == NULL)
-			dwarf_err(EX_DATAERR, "dwarf_formref_die(%s)",
-			    dwarf_diename(&memdie));
+		get_dwarf_attr(&memdie, DW_AT_type, &type_attr, &type_die);
 
 		/* Member offset ... */
 		if (get_member_offset(&memdie, &off) == -1)
@@ -224,16 +235,56 @@ structprobe(Dwarf *dw, Dwarf_Die *structdie)
 		if (get_member_size(&type_die, &msize) == -1)
 			dwarf_err(EX_DATAERR, "get_member_size");
 
+		/* Format name; 'struct foo', 'enum bar', 'char **', etc. */
 		if (isstruct(dwarf_tag(&type_die))) {
-			if (dwarf_diename(&type_die) != NULL)
-				snprintf(type_name, sizeof(type_name),
-				    "struct %s", dwarf_diename(&type_die));
-			else
-				snprintf(type_name, sizeof(type_name),
-				    "struct <anonymous>");
+			type_tag = "struct ";
+			type = dwarf_diename(&type_die);
+		} else if (dwarf_tag(&type_die) == DW_TAG_enumeration_type) {
+			type_tag = "enum ";
+			type = dwarf_diename(&type_die);
+		} else if (dwarf_tag(&type_die) == DW_TAG_pointer_type) {
+			unsigned i;
+
+			do {
+				if (dwarf_tag(&type_die) == DW_TAG_pointer_type)
+					type_ptrlevel++;
+				else if (isstruct(dwarf_tag(&type_die)))
+					type_tag = "struct ";
+				else if (dwarf_tag(&type_die) == DW_TAG_enumeration_type)
+					type_tag = "enum ";
+				else
+					printf("!!! XXX ignored pointer qualifier TAG %#x\n",
+					    dwarf_tag(&type_die));
+
+				/*
+				 * Pointers to basic types still need some
+				 * work. Clang doesn't emit an AT_TYPE for
+				 * 'void*,' for example.
+				 */
+				if (!dwarf_hasattr(&type_die, DW_AT_type))
+					break;
+
+				get_dwarf_attr(&type_die, DW_AT_type,
+				    &base_type_attr, &base_type_die);
+				type_die = base_type_die;
+				type_attr = base_type_attr;
+			} while (dwarf_tag(&type_die) != DW_TAG_base_type);
+
+			type = dwarf_diename(&type_die);
+			if (type_ptrlevel > sizeof(ptr_suffix) - 2)
+				type_ptrlevel = sizeof(ptr_suffix) - 2;
+			ptr_suffix[0] = ' ';
+			for (i = 1; i <= type_ptrlevel; i++)
+				ptr_suffix[i] = '*';
+			ptr_suffix[i] = '\0';
 		} else
-			snprintf(type_name, sizeof(type_name), "%s",
-			    dwarf_diename(&type_die));
+			type = dwarf_diename(&type_die);
+
+		if (type == NULL)
+			type = "<anonymous>";
+
+		snprintf(type_name, sizeof(type_name), "%s%s%s", type_tag,
+		    type, ptr_suffix);
 
 		if (off != lastoff) {
 			printf("\n\t/* XXX %ld bytes hole, try to pack */\n\n", off - lastoff);
