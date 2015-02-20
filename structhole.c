@@ -45,7 +45,11 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#ifdef __linux__
+#define __dead2
+#else
 #include <bsd/sys/cdefs.h>
+#endif
 
 #include <dwarf.h>
 #include <elf.h>
