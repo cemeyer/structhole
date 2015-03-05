@@ -2,3 +2,13 @@ structhole
 ==========
 
 Look for holes in structs by examining DWARF debugging output.
+
+Building
+========
+
+"make structhole"
+
+Use
+===
+
+"structhole my_struct /path/to/my_binary"
