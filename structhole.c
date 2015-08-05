@@ -29,6 +29,9 @@
 #undef NDEBUG
 #endif
 
+#ifndef __linux__
+#include <sys/cdefs.h>
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
 
@@ -45,7 +48,9 @@
 #include <sysexits.h>
 #include <unistd.h>
 
+#ifdef __linux__
 #include <bsd/sys/cdefs.h>
+#endif
 
 #include <dwarf.h>
 #include <elf.h>
