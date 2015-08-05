@@ -3,3 +3,5 @@ CFLAGS+=	-Werror -Wextra -Wno-missing-field-initializers -Wpointer-arith \
 			-Wformat=2
 
 LDLIBS=	-lelf -ldw
+
+all: structhole
