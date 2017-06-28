@@ -135,6 +135,7 @@ get_member_offset(Dwarf_Die *memdie, Dwarf_Word *off_out)
 {
 	Dwarf_Attribute loc_attr;
 	Dwarf_Block block;
+	Dwarf_Word data;
 
 	if (dwarf_attr_integrate(memdie, DW_AT_data_member_location, &loc_attr)
 	    == NULL)
@@ -153,8 +154,19 @@ get_member_offset(Dwarf_Die *memdie, Dwarf_Word *off_out)
 		    block.data[0] == DW_OP_constu);
 		get_uleb128(off_out, &block.data[1]);
 		return (0);
+	case DW_FORM_data1:
+	case DW_FORM_data2:
+	case DW_FORM_data4:
+	case DW_FORM_data8:
+	case DW_FORM_sdata:
+	case DW_FORM_udata:
+		if (dwarf_formudata(&loc_attr, &data))
+		    dwarf_err(EX_DATAERR, "dwarf_formudata(%s)",
+			dwarf_diename(memdie));
+		*off_out = data;
+		return (0);
 	default:
-		printf("ZZZ!\n");
+		printf("ZZZ %u!\n", dwarf_whatform(&loc_attr));
 		return (-1);
 	}
 }
