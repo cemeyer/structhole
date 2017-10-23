@@ -75,7 +75,7 @@ usage(void)
 	exit(EX_USAGE);
 }
 
-static void __dead2
+static void __dead2 __printflike(6, 7)
 _dwarf_err(const char *fn, unsigned ln, const char *func, int ex, int error,
     const char *fmt, ...)
 {
